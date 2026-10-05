@@ -1,6 +1,7 @@
 import os
 import asyncio
 from datetime import datetime
+import zoneinfo
 from flask import Flask, request
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
@@ -14,6 +15,9 @@ from telegram.ext import (
 
 # Initialize Flask App
 app = Flask(__name__)
+
+# Timezone Configuration (Singapore Time)
+SGT = zoneinfo.ZoneInfo("Asia/Singapore")
 
 # Conversation States
 (
@@ -40,7 +44,7 @@ TYPE_MENU = ReplyKeyboardMarkup(
     [["🚨 Ad Hoc", "✈️ Flight Movement"], ["❌ Cancel"]], resize_keyboard=True
 )
 FLIGHT_CHOICE_MENU = ReplyKeyboardMarkup(
-    [["ALPHA", "BRAVO", "CHARLIE"], ["↩️ Back", "❌ Cancel"]], resize_keyboard=True
+    [["ALPHA", "BRAVO", "CHARLIE"], ["↩️️ Back", "❌ Cancel"]], resize_keyboard=True
 )
 STEP1_MENU = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
 NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=True)
@@ -144,7 +148,9 @@ async def get_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     to_loc = update.message.text.strip().upper()
     raw_names = context.user_data.get("adhoc_raw_names", [])
     from_loc = context.user_data.get("adhoc_from", "")
-    current_time = datetime.now().strftime("%H%M")
+    
+    # Get Singapore Time
+    current_time = datetime.now(SGT).strftime("%H%M")
 
     formatted_names = format_numbered_list(raw_names)
 
@@ -349,7 +355,8 @@ async def get_flight_others(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text = update.message.text.strip()
     count_str, formatted_list = format_status_list(text)
 
-    now = datetime.now()
+    # Get CAA timestamp in SGT
+    now = datetime.now(SGT)
     caa_time = now.strftime("%H%MH %d%m%y")
 
     flight_name = context.user_data.get("flight_name", "")
@@ -370,7 +377,6 @@ async def get_flight_others(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     others_count = count_str
     others_list = formatted_list
 
-    # Assemble report body
     report_lines = [
         "MOVEMENT REPORT",
         "",
@@ -459,7 +465,7 @@ conv_handler = ConversationHandler(
         ],
         FLIGHT_TO: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^↩️ Back$"), back_to_flight_from),
+            MessageHandler(filters.Regex("^↩️ Back$"), back_to_flight_to),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_flight_to),
         ],
         FLIGHT_TOTAL: [
