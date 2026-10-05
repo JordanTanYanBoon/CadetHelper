@@ -1,7 +1,7 @@
-import logging
 import os
+import asyncio
 from datetime import datetime
-from dotenv import load_dotenv
+from flask import Flask, request
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,17 +12,15 @@ from telegram.ext import (
     filters,
 )
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
+# Initialize Flask App
+app = Flask(__name__)
 
 # States
 NAMES, FROM_LOC, TO_LOC = range(3)
 
 # Keyboards
 MAIN_MENU = ReplyKeyboardMarkup([["📝 Movement Report"]], resize_keyboard=True)
-# Menu for Step 1 (Cancel only)
 STEP1_MENU = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
-# Menu for Steps 2 & 3 (Cancel + Back)
 NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=True)
 
 
@@ -62,7 +60,6 @@ async def get_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def back_to_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Step 2 -> Step 1: Go back to edit Names."""
-    # Show current saved names so user can edit/re-send
     current = context.user_data.get("names", "None")
     await update.message.reply_text(
         f"Going back to Step 1.\n\n*Current Names:*\n{current}\n\nSend the updated **NAMES**:",
@@ -120,44 +117,50 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-def main():
-    TOKEN = os.getenv("BOT_TOKEN")
-    if not TOKEN:
-        raise ValueError("BOT_TOKEN is not set in the .env file!")
+# Initialize Telegram Application
+TOKEN = os.getenv("BOT_TOKEN")
+telegram_app = ApplicationBuilder().token(TOKEN).build()
 
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
-        ],
-        states={
-            NAMES: [
-                MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-                MessageHandler(filters.TEXT, get_names),
-            ],
-            FROM_LOC: [
-                MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-                MessageHandler(filters.Regex("^↩️ Back$"), back_to_names),
-                MessageHandler(filters.TEXT, get_from_loc),
-            ],
-            TO_LOC: [
-                MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-                MessageHandler(filters.Regex("^↩️ Back$"), back_to_from_loc),
-                MessageHandler(filters.TEXT, get_to_loc),
-            ],
-        },
-        fallbacks=[
+conv_handler = ConversationHandler(
+    entry_points=[
+        CommandHandler("start", start),
+        MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+    ],
+    states={
+        NAMES: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+            MessageHandler(filters.TEXT, get_names),
         ],
-    )
+        FROM_LOC: [
+            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+            MessageHandler(filters.Regex("^↩️ Back$"), back_to_names),
+            MessageHandler(filters.TEXT, get_from_loc),
+        ],
+        TO_LOC: [
+            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+            MessageHandler(filters.Regex("^↩️ Back$"), back_to_from_loc),
+            MessageHandler(filters.TEXT, get_to_loc),
+        ],
+    },
+    fallbacks=[
+        MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+        MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+    ],
+)
 
-    app.add_handler(conv_handler)
-    print("Bot is running...")
-    app.run_polling()
+telegram_app.add_handler(conv_handler)
 
 
-if __name__ == "__main__":
-    main()
+# Webhook Endpoint for Vercel Serverless Function
+@app.route("/", methods=["GET", "POST"])
+def webhook():
+    if request.method == "POST":
+        async def process():
+            async with telegram_app:
+                update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+                await telegram_app.process_update(update)
+
+        asyncio.run(process())
+        return "OK", 200
+
+    return "Bot is active!", 200
