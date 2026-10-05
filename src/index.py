@@ -278,11 +278,14 @@ async def back_to_flight_total(update: Update, context: ContextTypes.DEFAULT_TYP
     return FLIGHT_TOTAL
 
 
+async def get_flight_current(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Saves the current strength and shows the menu."""
+    context.user_data["flight_current"] = update.message.text.strip()
+    return await show_category_menu(update, context)
+
+
 async def show_category_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Shows the button options for status breakdown."""
-    if update.message:
-        context.user_data["flight_current"] = update.message.text.strip()
-
     reply_markup = get_category_keyboard(context.user_data)
     text = "Select categories to add personnel, or tap **DONE** if completed:"
 
@@ -467,7 +470,7 @@ conv_handler = ConversationHandler(
         ],
         ADHOC_TO: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^↩️ Back$"), back_to_adhoc_from),
+            MessageHandler(filters.Regex("^↩️️ Back$"), back_to_adhoc_from),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_adhoc_to),
         ],
         # Flight States
@@ -493,7 +496,7 @@ conv_handler = ConversationHandler(
         FLIGHT_CURRENT: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
             MessageHandler(filters.Regex("^↩️ Back$"), back_to_flight_total),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, show_category_menu),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_flight_current),
         ],
         FLIGHT_CATEGORY_MENU: [
             CallbackQueryHandler(handle_category_selection, pattern="^cat_"),
