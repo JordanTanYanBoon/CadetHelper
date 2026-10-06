@@ -4,14 +4,11 @@ from datetime import datetime
 import zoneinfo
 from flask import Flask, request
 from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
     Update,
 )
 from telegram.ext import (
     ApplicationBuilder,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -47,25 +44,40 @@ SGT = zoneinfo.ZoneInfo("Asia/Singapore")
 
 # Reply Keyboards
 MAIN_MENU = ReplyKeyboardMarkup([["📝 Movement Report"]], resize_keyboard=True)
+
 TYPE_MENU = ReplyKeyboardMarkup(
-    [["🚨 Ad Hoc", "✈️ Flight Movement"], ["❌ Cancel"]], resize_keyboard=True
+    [
+        ["🚨 Ad Hoc", "🚨 Ad Hoc (Arrival)"],
+        ["✈️ Flight Movement", "✈️ Flight (Arrival)"],
+        ["❌ Cancel"]
+    ], 
+    resize_keyboard=True
 )
+
 FLIGHT_CHOICE_MENU = ReplyKeyboardMarkup(
     [["ALPHA", "BRAVO", "CHARLIE"], ["↩️ Back", "❌ Cancel"]], resize_keyboard=True
 )
+
 STEP1_MENU = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
 NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=True)
 
+# New Keyboard for Quick Locations
+LOC_NAV_MENU = ReplyKeyboardMarkup(
+    [
+        ["SAFTI GUARDROOM", "AIR WINGLINE", "SAFTI MI"],
+        ["DHA", "SAFTI PARADE SQUARE"],
+        ["↩️ Back", "❌ Cancel"]
+    ], 
+    resize_keyboard=True
+)
 
 def parse_raw_names(text: str) -> list[str]:
     """Splits text lines and cleans them into uppercase strings."""
     return [line.strip().upper() for line in text.strip().split("\n") if line.strip()]
 
-
 def format_numbered_list(names: list[str]) -> str:
     """Formats list of names into 1. NAME 2. NAME..."""
     return "\n".join(f"{i+1}. {name}" for i, name in enumerate(names))
-
 
 def format_status_list(text: str) -> tuple[str, str]:
     """Formats status personnel or defaults to 00 if nil/none."""
@@ -78,28 +90,24 @@ def format_status_list(text: str) -> tuple[str, str]:
     formatted_items = "\n".join(f"{i+1}. {line}" for i, line in enumerate(lines))
     return count_str, formatted_items
 
-
-def get_category_keyboard(user_data: dict) -> InlineKeyboardMarkup:
-    """Generates inline buttons showing checkmarks for completed categories."""
+def get_category_keyboard(user_data: dict) -> ReplyKeyboardMarkup:
+    """Generates reply buttons showing checkmarks for completed categories."""
     status_icon = "✅ " if "status_count" in user_data else ""
     ooc_icon = "✅ " if "ooc_count" in user_data else ""
     nww_icon = "✅ " if "nww_count" in user_data else ""
     others_icon = "✅ " if "others_count" in user_data else ""
 
     keyboard = [
-        [InlineKeyboardButton(f"{status_icon}On Status", callback_data="cat_status")],
-        [InlineKeyboardButton(f"{ooc_icon}Out of Camp", callback_data="cat_ooc")],
-        [InlineKeyboardButton(f"{nww_icon}Currently Not With Wing", callback_data="cat_nww")],
-        [InlineKeyboardButton(f"{others_icon}Others", callback_data="cat_others")],
-        [InlineKeyboardButton("✅ DONE (Generate Report)", callback_data="cat_done")],
+        [f"{status_icon}On Status", f"{ooc_icon}Out of Camp"],
+        [f"{nww_icon}Currently Not With Wing", f"{others_icon}Others"],
+        ["✅ DONE (Generate Report)"],
+        ["↩️ Back", "❌ Cancel"]
     ]
-    return InlineKeyboardMarkup(keyboard)
-
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Ready! Tap below to start:", reply_markup=MAIN_MENU)
     return ConversationHandler.END
-
 
 async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Prompt user to select report type."""
@@ -108,31 +116,46 @@ async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     )
     return REPORT_TYPE
 
-
 # -------------------------------------------------------------------
 # AD HOC MOVEMENT REPORT FLOW
 # -------------------------------------------------------------------
 
+async def start_adhoc_departure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["is_arrival"] = False
+    return await start_adhoc(update, context)
+
+async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["is_arrival"] = True
+    return await start_adhoc(update, context)
+
 async def start_adhoc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    total_steps = 2 if context.user_data.get("is_arrival") else 3
     await update.message.reply_text(
-        "1/3: Send the **NAMES** (one per line):",
+        f"1/{total_steps}: Send the **NAMES** (one per line):",
         parse_mode="Markdown",
         reply_markup=STEP1_MENU,
     )
     return ADHOC_NAMES
 
-
 async def get_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw_names = parse_raw_names(update.message.text)
     context.user_data["adhoc_raw_names"] = raw_names
+    is_arrival = context.user_data.get("is_arrival", False)
 
-    await update.message.reply_text(
-        "2/3: Send **LOCATION A** (Starting location):",
-        parse_mode="Markdown",
-        reply_markup=NAV_MENU,
-    )
-    return ADHOC_FROM
-
+    if is_arrival:
+        await update.message.reply_text(
+            "2/2: Send **ARRIVAL LOCATION**:",
+            parse_mode="Markdown",
+            reply_markup=LOC_NAV_MENU,
+        )
+        return ADHOC_TO
+    else:
+        await update.message.reply_text(
+            "2/3: Send **LOCATION A** (Starting location):",
+            parse_mode="Markdown",
+            reply_markup=LOC_NAV_MENU,
+        )
+        return ADHOC_FROM
 
 async def back_to_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw_names = context.user_data.get("adhoc_raw_names", [])
@@ -146,40 +169,49 @@ async def back_to_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ADHOC_NAMES
 
-
 async def get_adhoc_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["adhoc_from"] = update.message.text.strip().upper()
 
     await update.message.reply_text(
         "3/3: Send **LOCATION B** (Destination):",
         parse_mode="Markdown",
-        reply_markup=NAV_MENU,
+        reply_markup=LOC_NAV_MENU,
     )
     return ADHOC_TO
-
 
 async def back_to_adhoc_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("adhoc_from", "None")
     await update.message.reply_text(
         f"Going back to Step 2.\n\n*Current Location A:* {current}\n\nSend **LOCATION A**:",
         parse_mode="Markdown",
-        reply_markup=NAV_MENU,
+        reply_markup=LOC_NAV_MENU,
     )
     return ADHOC_FROM
 
+async def back_from_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Routes the back button dynamically depending on if it's an Arrival or Departure."""
+    if context.user_data.get("is_arrival", False):
+        return await back_to_adhoc_names(update, context)
+    else:
+        return await back_to_adhoc_from(update, context)
 
 async def get_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     to_loc = update.message.text.strip().upper()
     raw_names = context.user_data.get("adhoc_raw_names", [])
-    from_loc = context.user_data.get("adhoc_from", "")
     
     current_time = datetime.now(SGT).strftime("%H%M")
     formatted_names = format_numbered_list(raw_names)
 
+    if context.user_data.get("is_arrival", False):
+        movement_text = f"Arrival at {to_loc} @ {current_time}H"
+    else:
+        from_loc = context.user_data.get("adhoc_from", "")
+        movement_text = f"Movement from {from_loc} to {to_loc} @ {current_time}H"
+
     report = (
         "AD HOC MOVEMENT REPORT\n\n"
         f"{formatted_names}\n\n"
-        f"Movement from {from_loc} to {to_loc} @ {current_time}H"
+        f"{movement_text}"
     )
 
     await update.message.reply_text(f"```\n{report}\n```", parse_mode="Markdown")
@@ -188,27 +220,43 @@ async def get_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
     return ConversationHandler.END
 
-
 # -------------------------------------------------------------------
 # FLIGHT MOVEMENT REPORT FLOW
 # -------------------------------------------------------------------
 
+async def start_flight_departure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["is_arrival"] = False
+    return await start_flight(update, context)
+
+async def start_flight_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["is_arrival"] = True
+    return await start_flight(update, context)
+
 async def start_flight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    total_steps = 4 if context.user_data.get("is_arrival") else 5
     await update.message.reply_text(
-        "1/5: Select Flight (ALPHA, BRAVO, or CHARLIE):", reply_markup=FLIGHT_CHOICE_MENU
+        f"1/{total_steps}: Select Flight (ALPHA, BRAVO, or CHARLIE):", reply_markup=FLIGHT_CHOICE_MENU
     )
     return FLIGHT_SELECT
 
-
 async def get_flight_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_name"] = update.message.text.strip().upper()
-    await update.message.reply_text(
-        "2/5: Send **LOCATION A** (Starting location):",
-        parse_mode="Markdown",
-        reply_markup=NAV_MENU,
-    )
-    return FLIGHT_FROM
+    is_arrival = context.user_data.get("is_arrival", False)
 
+    if is_arrival:
+        await update.message.reply_text(
+            "2/4: Send **ARRIVAL LOCATION**:",
+            parse_mode="Markdown",
+            reply_markup=LOC_NAV_MENU,
+        )
+        return FLIGHT_TO
+    else:
+        await update.message.reply_text(
+            "2/5: Send **LOCATION A** (Starting location):",
+            parse_mode="Markdown",
+            reply_markup=LOC_NAV_MENU,
+        )
+        return FLIGHT_FROM
 
 async def back_to_flight_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
@@ -217,147 +265,151 @@ async def back_to_flight_select(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return FLIGHT_SELECT
 
-
 async def get_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_from"] = update.message.text.strip().upper()
     await update.message.reply_text(
         "3/5: Send **LOCATION B** (Destination):",
         parse_mode="Markdown",
-        reply_markup=NAV_MENU,
+        reply_markup=LOC_NAV_MENU,
     )
     return FLIGHT_TO
-
 
 async def back_to_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_from", "None")
     await update.message.reply_text(
         f"Going back to Step 2.\n\n*Current Location A:* {current}\n\nSend **LOCATION A**:",
         parse_mode="Markdown",
-        reply_markup=NAV_MENU,
+        reply_markup=LOC_NAV_MENU,
     )
     return FLIGHT_FROM
 
+async def back_from_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Routes the back button dynamically depending on if it's an Arrival or Departure."""
+    if context.user_data.get("is_arrival", False):
+        return await back_to_flight_select(update, context)
+    else:
+        return await back_to_flight_from(update, context)
 
 async def get_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_to"] = update.message.text.strip().upper()
+    is_arrival = context.user_data.get("is_arrival", False)
+    step = "3/4" if is_arrival else "4/5"
+
     await update.message.reply_text(
-        "4/5: Send **TOTAL STRENGTH** (e.g., 37):",
+        f"{step}: Send **TOTAL STRENGTH** (e.g., 37):",
         parse_mode="Markdown",
         reply_markup=NAV_MENU,
     )
     return FLIGHT_TOTAL
 
-
 async def back_to_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_to", "None")
+    is_arrival = context.user_data.get("is_arrival", False)
+    step = "2" if is_arrival else "3"
+    loc_label = "ARRIVAL LOCATION" if is_arrival else "LOCATION B"
+
     await update.message.reply_text(
-        f"Going back to Step 3.\n\n*Current Location B:* {current}\n\nSend **LOCATION B**:",
+        f"Going back to Step {step}.\n\n*Current {loc_label}:* {current}\n\nSend **{loc_label}**:",
         parse_mode="Markdown",
-        reply_markup=NAV_MENU,
+        reply_markup=LOC_NAV_MENU,
     )
     return FLIGHT_TO
 
-
 async def get_flight_total(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_total"] = update.message.text.strip()
+    is_arrival = context.user_data.get("is_arrival", False)
+    step = "4/4" if is_arrival else "5/5"
+
     await update.message.reply_text(
-        "5/5: Send **CURRENT STRENGTH** (e.g., 37):",
+        f"{step}: Send **CURRENT STRENGTH** (e.g., 37):",
         parse_mode="Markdown",
         reply_markup=NAV_MENU,
     )
     return FLIGHT_CURRENT
 
-
 async def back_to_flight_total(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_total", "None")
+    is_arrival = context.user_data.get("is_arrival", False)
+    step = "3" if is_arrival else "4"
+
     await update.message.reply_text(
-        f"Going back to Step 4.\n\n*Current Total Strength:* {current}\n\nSend **TOTAL STRENGTH**:",
+        f"Going back to Step {step}.\n\n*Current Total Strength:* {current}\n\nSend **TOTAL STRENGTH**:",
         parse_mode="Markdown",
         reply_markup=NAV_MENU,
     )
     return FLIGHT_TOTAL
 
-
 async def get_flight_current(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the current strength and shows the menu."""
     context.user_data["flight_current"] = update.message.text.strip()
     return await show_category_menu(update, context)
 
-
 async def show_category_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Shows the button options for status breakdown."""
+    """Shows the button options for status breakdown via Reply Keyboard."""
     reply_markup = get_category_keyboard(context.user_data)
-    text = "Select categories to add personnel, or tap **DONE** if completed:"
-
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
-
+    text = "Select categories to add personnel, or tap **✅ DONE** if completed:"
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     return FLIGHT_CATEGORY_MENU
 
-
 async def handle_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles category button clicks."""
-    query = update.callback_query
-    await query.answer()
+    """Handles text button clicks from the category menu."""
+    choice = update.message.text
 
-    choice = query.data
-
-    if choice == "cat_status":
+    if "On Status" in choice:
         raw = context.user_data.get("status_raw", "")
         msg = "Send **ON STATUS** personnel (Rank, Name & Reason, one per line) or type 'NIL':"
         if raw:
             msg = f"Current Input:\n```\n{raw}\n```\nSend updated **ON STATUS** personnel:"
-        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
         return FLIGHT_ENTER_STATUS
 
-    elif choice == "cat_ooc":
+    elif "Out of Camp" in choice:
         raw = context.user_data.get("ooc_raw", "")
         msg = "Send **OUT OF CAMP** personnel (Rank, Name & Reason, one per line) or type 'NIL':"
         if raw:
             msg = f"Current Input:\n```\n{raw}\n```\nSend updated **OUT OF CAMP** personnel:"
-        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
         return FLIGHT_ENTER_OOC
 
-    elif choice == "cat_nww":
+    elif "Not With Wing" in choice:
         raw = context.user_data.get("nww_raw", "")
         msg = "Send **CURRENTLY NOT WITH WING** personnel (one per line) or type 'NIL':"
         if raw:
             msg = f"Current Input:\n```\n{raw}\n```\nSend updated **CURRENTLY NOT WITH WING** personnel:"
-        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
         return FLIGHT_ENTER_NWW
 
-    elif choice == "cat_others":
+    elif "Others" in choice:
         raw = context.user_data.get("others_raw", "")
         msg = "Send **OTHERS** remarks/personnel or type 'NIL':"
         if raw:
             msg = f"Current Input:\n```\n{raw}\n```\nSend updated **OTHERS** remarks:"
-        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=NAV_MENU)
         return FLIGHT_ENTER_OTHERS
 
-    elif choice == "cat_done":
-        # Finalize and build report
+    elif "DONE" in choice:
         now = datetime.now(SGT)
         caa_time = now.strftime("%H%MH %d%m%y")
 
         flight_name = context.user_data.get("flight_name", "")
-        from_loc = context.user_data.get("flight_from", "")
         to_loc = context.user_data.get("flight_to", "")
+        is_arrival = context.user_data.get("is_arrival", False)
+
+        if is_arrival:
+            movement_text = f"Arrival at {to_loc}"
+        else:
+            from_loc = context.user_data.get("flight_from", "")
+            movement_text = f"Movement from {from_loc} to {to_loc}"
+
         total_str = context.user_data.get("flight_total", "0")
         curr_str = context.user_data.get("flight_current", "0")
 
-        # Defaults to 00 if unselected
         status_count = context.user_data.get("status_count", "00")
         status_list = context.user_data.get("status_list", "")
-
         ooc_count = context.user_data.get("ooc_count", "00")
         ooc_list = context.user_data.get("ooc_list", "")
-
         nww_count = context.user_data.get("nww_count", "00")
         nww_list = context.user_data.get("nww_list", "")
-
         others_count = context.user_data.get("others_count", "00")
         others_list = context.user_data.get("others_list", "")
 
@@ -368,7 +420,7 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
             "",
             f"CAA: {caa_time}",
             "",
-            f"Movement from {from_loc} to {to_loc}",
+            movement_text,
             "",
             f"TOTAL STRENGTH: {total_str}",
             f"CURRENT STRENGTH: {curr_str}",
@@ -394,12 +446,11 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
 
         full_report = "\n".join(report_lines)
 
-        await query.message.reply_text(f"```\n{full_report}\n```", parse_mode="Markdown")
+        await update.message.reply_text(f"```\n{full_report}\n```", parse_mode="Markdown")
 
         context.user_data.clear()
-        await query.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
+        await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
         return ConversationHandler.END
-
 
 async def receive_status_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
@@ -409,7 +460,6 @@ async def receive_status_input(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["status_list"] = formatted_list
     return await show_category_menu(update, context)
 
-
 async def receive_ooc_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     count_str, formatted_list = format_status_list(text)
@@ -417,7 +467,6 @@ async def receive_ooc_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["ooc_count"] = count_str
     context.user_data["ooc_list"] = formatted_list
     return await show_category_menu(update, context)
-
 
 async def receive_nww_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
@@ -427,7 +476,6 @@ async def receive_nww_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["nww_list"] = formatted_list
     return await show_category_menu(update, context)
 
-
 async def receive_others_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     count_str, formatted_list = format_status_list(text)
@@ -435,7 +483,6 @@ async def receive_others_input(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["others_count"] = count_str
     context.user_data["others_list"] = formatted_list
     return await show_category_menu(update, context)
-
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -454,8 +501,10 @@ conv_handler = ConversationHandler(
     ],
     states={
         REPORT_TYPE: [
-            MessageHandler(filters.Regex("^🚨 Ad Hoc$"), start_adhoc),
-            MessageHandler(filters.Regex("^✈️ Flight Movement$"), start_flight),
+            MessageHandler(filters.Regex("^🚨 Ad Hoc$"), start_adhoc_departure),
+            MessageHandler(filters.Regex("^🚨 Ad Hoc \(Arrival\)$"), start_adhoc_arrival),
+            MessageHandler(filters.Regex("^✈️ Flight Movement$"), start_flight_departure),
+            MessageHandler(filters.Regex("^✈️ Flight \(Arrival\)$"), start_flight_arrival),
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
         ],
         # Ad Hoc States
@@ -470,7 +519,7 @@ conv_handler = ConversationHandler(
         ],
         ADHOC_TO: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^↩️️ Back$"), back_to_adhoc_from),
+            MessageHandler(filters.Regex("^↩️ Back$"), back_from_adhoc_to),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_adhoc_to),
         ],
         # Flight States
@@ -485,7 +534,7 @@ conv_handler = ConversationHandler(
         ],
         FLIGHT_TO: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^↩️ Back$"), back_to_flight_from),
+            MessageHandler(filters.Regex("^↩️ Back$"), back_from_flight_to),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_flight_to),
         ],
         FLIGHT_TOTAL: [
@@ -499,7 +548,7 @@ conv_handler = ConversationHandler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_flight_current),
         ],
         FLIGHT_CATEGORY_MENU: [
-            CallbackQueryHandler(handle_category_selection, pattern="^cat_"),
+            MessageHandler(filters.Regex("(?i)On Status|Out of Camp|Not With Wing|Others|DONE"), handle_category_selection),
             MessageHandler(filters.Regex("^↩️ Back$"), back_to_flight_total),
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
         ],
@@ -532,17 +581,23 @@ conv_handler = ConversationHandler(
 
 telegram_app.add_handler(conv_handler)
 
-
 # Webhook Endpoint for Vercel Serverless Function
 @app.route("/", methods=["GET", "POST"])
 def webhook():
     if request.method == "POST":
         async def process():
-            async with telegram_app:
-                update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-                await telegram_app.process_update(update)
+            # Initialize app only without full startup/shutdown overhead
+            if not telegram_app._initialized:
+                await telegram_app.initialize()
+                
+            update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+            await telegram_app.process_update(update)
 
-        asyncio.run(process())
+        try:
+            asyncio.run(process())
+        except Exception as e:
+            print(f"Error processing update: {e}")
+            
         return "OK", 200
 
     return "Bot is active!", 200
