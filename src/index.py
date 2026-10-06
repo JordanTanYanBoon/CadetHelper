@@ -586,15 +586,16 @@ telegram_app.add_handler(conv_handler)
 def webhook():
     if request.method == "POST":
         async def process():
-            # Initialize app only without full startup/shutdown overhead
-            if not telegram_app._initialized:
-                await telegram_app.initialize()
-                
-            update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-            await telegram_app.process_update(update)
+            # 'async with' guarantees a fresh connection and clean teardown per message
+            async with telegram_app:
+                update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+                await telegram_app.process_update(update)
 
         try:
-            asyncio.run(process())
+            # Create a fresh event loop for this specific Vercel invocation
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(process())
         except Exception as e:
             print(f"Error processing update: {e}")
             
