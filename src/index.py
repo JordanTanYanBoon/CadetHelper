@@ -40,10 +40,17 @@ SGT = zoneinfo.ZoneInfo("Asia/Singapore")
     FLIGHT_ENTER_OOC,
     FLIGHT_ENTER_NWW,
     FLIGHT_ENTER_OTHERS,
-) = range(14)
+    # Flight Notes States
+    FLIGHT_NOTES_STATE,
+) = range(15)
 
 # Reply Keyboards
-MAIN_MENU = ReplyKeyboardMarkup([["📝 Movement Report"]], resize_keyboard=True)
+MAIN_MENU = ReplyKeyboardMarkup(
+    [
+        ["📝 Movement Report", "📋 Flight Notes"]
+    ], 
+    resize_keyboard=True
+)
 
 TYPE_MENU = ReplyKeyboardMarkup(
     [
@@ -51,6 +58,14 @@ TYPE_MENU = ReplyKeyboardMarkup(
         ["✈️ Flight Movement", "✈️ Flight (Arrival)"],
         ["❌ Cancel"]
     ], 
+    resize_keyboard=True
+)
+
+FLIGHT_NOTES_MENU = ReplyKeyboardMarkup(
+    [
+        ["🛏️ Bravo Bunk Standardisation"],
+        ["❌ Cancel"]
+    ],
     resize_keyboard=True
 )
 
@@ -70,6 +85,70 @@ LOC_NAV_MENU = ReplyKeyboardMarkup(
     ], 
     resize_keyboard=True
 )
+
+BUNK_STANDARDISATION_TEXT = """Bunk standardisation 
+Hang clothes closet
+- pillowcase on top, handle facing out and the zip zipped close
+- Orca attire flushed to the right, follow last week one
+- 1x smart 4 attire flushed to the left, facing the orca. Follow orca way of hanging, shirt dont button only velcro.
+- Unused hangers keep in duffel
+- Extra no 4 attire fold with the name tag out and put at left side, pants behind. If unsure this is basically the SLT PDF way.
+
+Below the closet top most drawers
+- where all your RR, WW, socks and underwear are, follow last week one. If have more than one is ok, but must at least have one.
+
+Middle and bottom drawers
+- Middle empty
+- Bottom put personal stuff like your attires that are not RR WW and no 4, but must be neat
+
+Field pack compartment 
+- top part put LBS, everything strapped and buckled, front buckle facing outwards (basically the toggle rope part at the inside)
+- Bottom part from left to right: assault bag, field pack, laptop bag, all facing left. 
+
+Towel racks
+- towel tag at the left side at the inner side of the towel when placed at the rack.
+- Beside towel rack is all the headgears, from top to bottom: helmet, jockey, helmet, jockey. 
+
+Compartment on top of table
+- Bottom part all dry toiletries and laundry stuff, flushed to right side neatly. Left side any miscellaneous stuff yall have.
+- Middle part comms bag on the left, journal stuff to the right
+- Top part empty
+- If got any food placed in here please put in duffel during SBA
+
+Compartment on top of rifle locker
+- Top part empty 
+- Middle and bottom part one person take one part, put wet toiletries stuff like toothbrush toothpaste shaver and whatever flush to right side.
+
+Other stuff in room
+- bucket upside down flushed towards the rifle locker, handle facing straight outwards 
+- Duffel bag at the head of the bed, name tag face outward, everything zipped and buckled
+- Shoes starting from the foot of the bed, boots with shoelaces tucked in, admin, non admin running shoes, book out shoe, slippers. If anything shoe dont have one just flush the rest toward the foot of the bed. 
+- Rubbish bin in front of the rifle locker with pedal facing outwards
+- Tables empty, chairs hang, beds neat, book out bag at the foot of the bed like last week.
+- Clean mosquito nets and blinds
+
+Last week’s SBA notes
+
+Toilet
+Leave fans on to dry
+Top of the showers
+Sinks last to be cleaned
+No hair in drain, open drain and throw inside
+Scrub soap stains on door
+Open washing machine to dry
+Clean power stain on washing machine 
+Clean under washing machine 
+Washing machine drain clogged
+Dirt at washing machine area
+
+Common Area
+loud hailer
+notice board
+cabinets 
+tables and hangar
+hose reel
+All ledges
+all accessible surfaces"""
 
 def parse_raw_names(text: str) -> list[str]:
     """Splits text lines and cleans them into uppercase strings."""
@@ -115,6 +194,17 @@ async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         "Select the type of Movement Report:", reply_markup=TYPE_MENU
     )
     return REPORT_TYPE
+
+async def start_flight_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Prompt user to select Flight Notes options."""
+    await update.message.reply_text(
+        "Select Flight Notes option:", reply_markup=FLIGHT_NOTES_MENU
+    )
+    return FLIGHT_NOTES_STATE
+
+async def send_bunk_standardisation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(BUNK_STANDARDISATION_TEXT, reply_markup=MAIN_MENU)
+    return ConversationHandler.END
 
 # -------------------------------------------------------------------
 # AD HOC MOVEMENT REPORT FLOW
@@ -498,6 +588,7 @@ conv_handler = ConversationHandler(
     entry_points=[
         CommandHandler("start", start),
         MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+        MessageHandler(filters.Regex("^📋 Flight Notes$"), start_flight_notes),
     ],
     states={
         REPORT_TYPE: [
@@ -505,6 +596,10 @@ conv_handler = ConversationHandler(
             MessageHandler(filters.Regex("^🚨 Ad Hoc \(Arrival\)$"), start_adhoc_arrival),
             MessageHandler(filters.Regex("^✈️ Flight Movement$"), start_flight_departure),
             MessageHandler(filters.Regex("^✈️ Flight \(Arrival\)$"), start_flight_arrival),
+            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+        ],
+        FLIGHT_NOTES_STATE: [
+            MessageHandler(filters.Regex("^🛏️ Bravo Bunk Standardisation$"), send_bunk_standardisation),
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
         ],
         # Ad Hoc States
@@ -576,6 +671,7 @@ conv_handler = ConversationHandler(
     fallbacks=[
         MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
         MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+        MessageHandler(filters.Regex("^📋 Flight Notes$"), start_flight_notes),
     ],
 )
 
@@ -586,13 +682,11 @@ telegram_app.add_handler(conv_handler)
 def webhook():
     if request.method == "POST":
         async def process():
-            # 'async with' guarantees a fresh connection and clean teardown per message
             async with telegram_app:
                 update = Update.de_json(request.get_json(force=True), telegram_app.bot)
                 await telegram_app.process_update(update)
 
         try:
-            # Create a fresh event loop for this specific Vercel invocation
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(process())
