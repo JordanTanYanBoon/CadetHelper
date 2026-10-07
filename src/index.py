@@ -242,7 +242,7 @@ async def get_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return ADHOC_TO
     else:
         await update.message.reply_text(
-            "2/3: Send **LOCATION A** (Starting location):",
+            "2/3: Send **STARTING LOCATION**:",
             parse_mode="Markdown",
             reply_markup=LOC_NAV_MENU,
         )
@@ -264,7 +264,7 @@ async def get_adhoc_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data["adhoc_from"] = update.message.text.strip().upper()
 
     await update.message.reply_text(
-        "3/3: Send **LOCATION B** (Destination):",
+        "3/3: Send **Destination**:",
         parse_mode="Markdown",
         reply_markup=LOC_NAV_MENU,
     )
@@ -273,7 +273,7 @@ async def get_adhoc_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def back_to_adhoc_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("adhoc_from", "None")
     await update.message.reply_text(
-        f"Going back to Step 2.\n\n*Current Location A:* {current}\n\nSend **LOCATION A**:",
+        f"Going back to Step 2.\n\n*STARTING LOCATION:* {current}\n\nSend **STARTING LOCATION**:",
         parse_mode="Markdown",
         reply_markup=LOC_NAV_MENU,
     )
@@ -343,7 +343,7 @@ async def get_flight_select(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return FLIGHT_TO
     else:
         await update.message.reply_text(
-            "2/5: Send **LOCATION A** (Starting location):",
+            "2/5: Send **STARTING LOCATION:",
             parse_mode="Markdown",
             reply_markup=LOC_NAV_MENU,
         )
@@ -359,7 +359,7 @@ async def back_to_flight_select(update: Update, context: ContextTypes.DEFAULT_TY
 async def get_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_from"] = update.message.text.strip().upper()
     await update.message.reply_text(
-        "3/5: Send **LOCATION B** (Destination):",
+        "3/5: Send **ARRIVAL LOCATION**:",
         parse_mode="Markdown",
         reply_markup=LOC_NAV_MENU,
     )
@@ -368,7 +368,7 @@ async def get_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def back_to_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_from", "None")
     await update.message.reply_text(
-        f"Going back to Step 2.\n\n*Current Location A:* {current}\n\nSend **LOCATION A**:",
+        f"Going back to Step 2.\n\n*STARTING LOCATION:* {current}\n\nSend **STARTING LOCATION**:",
         parse_mode="Markdown",
         reply_markup=LOC_NAV_MENU,
     )
@@ -397,7 +397,7 @@ async def back_to_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     current = context.user_data.get("flight_to", "None")
     is_arrival = context.user_data.get("is_arrival", False)
     step = "2" if is_arrival else "3"
-    loc_label = "ARRIVAL LOCATION" if is_arrival else "LOCATION B"
+    loc_label = "ARRIVAL LOCATION"
 
     await update.message.reply_text(
         f"Going back to Step {step}.\n\n*Current {loc_label}:* {current}\n\nSend **{loc_label}**:",
