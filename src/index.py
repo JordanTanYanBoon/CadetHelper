@@ -79,8 +79,9 @@ NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=
 # New Keyboard for Quick Locations
 LOC_NAV_MENU = ReplyKeyboardMarkup(
     [
-        ["SAFTI GUARDROOM", "AIR WINGLINE", "SAFTI MI"],
-        ["DHA", "SAFTI PARADE SQUARE"],
+        ["AIR WINGLINE", "DHA", "CA2"],
+        ["SAFTI MC", "SAFTI PS", "SAFTI GAURDROOM"],
+        ["RUBBISH CHUTE"],
         ["↩️ Back", "❌ Cancel"]
     ], 
     resize_keyboard=True
