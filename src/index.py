@@ -54,7 +54,7 @@ class FlightRecord(db.Model):
     __tablename__ = "flight_records"
 
     id = db.Column(db.Integer, primary_key=True)
-    flight_name = db.Column(db.String(50), primary_key=True) # ALPHA, BRAVO, or CHARLIE
+    flight_name = db.Column(db.String(50), primary_key=True)
     from_location = db.Column(db.String(100), nullable=True)
     to_location = db.Column(db.String(100), nullable=True)
     total_strength = db.Column(db.String(10), nullable=True)
@@ -121,7 +121,6 @@ def save_flight_departure(data: dict):
 def get_flight_last_record(flight_name: str) -> FlightRecord:
     return FlightRecord.query.filter_by(flight_name=flight_name).first()
 
-
 # -------------------------------------------------------------------
 # Conversation States & Keyboards
 # -------------------------------------------------------------------
@@ -145,9 +144,19 @@ def get_flight_last_record(flight_name: str) -> FlightRecord:
     FLIGHT_ENTER_OTHERS,
     # Flight Notes States
     FLIGHT_NOTES_STATE,
-) = range(15)
+    # BIBO States
+    BIBO_TYPE,
+    BIBO_NAMES,
+    BIBO_LOCATION,
+) = range(18)
 
-MAIN_MENU = ReplyKeyboardMarkup([["📝 Movement Report", "📋 Flight Notes"]], resize_keyboard=True)
+MAIN_MENU = ReplyKeyboardMarkup(
+    [
+        ["📝 Movement Report", "🏕️ BIBO Report"],
+        ["📋 Flight Notes"]
+    ], 
+    resize_keyboard=True
+)
 
 TYPE_MENU = ReplyKeyboardMarkup(
     [
@@ -155,6 +164,14 @@ TYPE_MENU = ReplyKeyboardMarkup(
         ["✈️ Flight Movement", "✈️ Flight (Arrival)"],
         ["❌ Cancel"]
     ], 
+    resize_keyboard=True
+)
+
+BIBO_MENU = ReplyKeyboardMarkup(
+    [
+        ["📥 Book In (BI)", "📤 Book Out (BO)"],
+        ["❌ Cancel"]
+    ],
     resize_keyboard=True
 )
 
@@ -171,8 +188,8 @@ NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=
 
 LOC_NAV_MENU = ReplyKeyboardMarkup(
     [
-        ["AIR WINGLINE", "DHA", "CA2"],
-        ["SAFTI MC", "SAFTI PS", "SAFTI GAURDROOM"],
+        ["SAFTI MI", "AIR WINGLINE", "DHA"],
+        ["SAFTI MC", "SAFTI PS", "SAFTI GUARDROOM"],
         ["RUBBISH CHUTE"],
         ["↩️ Back", "❌ Cancel"]
     ], 
@@ -250,7 +267,6 @@ def parse_raw_names(text: str) -> list[str]:
     for line in lines:
         line = line.strip()
         if line:
-            # Remove leading numbering like "1.", "1)", "-", etc. if user typed them
             line_cleaned = re.sub(r"^(\d+[\.\)]\s*|-\s*|\*\s*)", "", line)
             cleaned_names.append(line_cleaned.upper())
     return cleaned_names
@@ -292,6 +308,64 @@ async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     )
     return REPORT_TYPE
 
+async def start_bibo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "Select BIBO option:", reply_markup=BIBO_MENU
+    )
+    return BIBO_TYPE
+
+async def start_bibo_in(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["bibo_action"] = "booked in of"
+    await update.message.reply_text(
+        "1/2: Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
+        parse_mode="Markdown",
+        reply_markup=STEP1_MENU,
+    )
+    return BIBO_NAMES
+
+async def start_bibo_out(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["bibo_action"] = "booked out of"
+    await update.message.reply_text(
+        "1/2: Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
+        parse_mode="Markdown",
+        reply_markup=STEP1_MENU,
+    )
+    return BIBO_NAMES
+
+async def get_bibo_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    raw_names = parse_raw_names(update.message.text)
+    context.user_data["bibo_names"] = raw_names
+    await update.message.reply_text(
+        "2/2: Send **LOCATION**:",
+        parse_mode="Markdown",
+        reply_markup=LOC_NAV_MENU,
+    )
+    return BIBO_LOCATION
+
+async def get_bibo_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    location = update.message.text.strip().upper()
+    names = context.user_data.get("bibo_names", [])
+    action = context.user_data.get("bibo_action", "booked in of")
+    
+    now = datetime.now(SGT)
+    date_str = now.strftime("%d%m%y")
+    time_str = now.strftime("%H%M")
+    
+    count_str = f"{len(names)}/{len(names)}"
+    formatted_names = format_numbered_list(names)
+
+    report = (
+        f"BIBO REPORT FOR {date_str}\n\n"
+        f"——————————————————\n\n"
+        f"{count_str} cadets from Air Wing have {action} {location} as of {time_str}H\n\n"
+        f"{formatted_names}"
+    )
+
+    await update.message.reply_text(f"```\n{report}\n```", parse_mode="Markdown")
+    context.user_data.clear()
+    await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
+    return ConversationHandler.END
+
 async def start_flight_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Select Flight Notes option:", reply_markup=FLIGHT_NOTES_MENU
@@ -309,8 +383,7 @@ async def send_bunk_standardisation(update: Update, context: ContextTypes.DEFAUL
 async def start_adhoc_departure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["is_arrival"] = False
     await update.message.reply_text(
-        "1/3: Send the **NAMES** (one per line).\n"
-        "_Note: Names will be automatically capitalized and numbered for you._",
+        "1/3: Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
         parse_mode="Markdown",
         reply_markup=STEP1_MENU,
     )
@@ -323,9 +396,6 @@ async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if record and record.raw_names:
         names_list = parse_raw_names(record.raw_names)
-        context.user_data["adhoc_raw_names"] = names_list
-        
-        # Automatically use the previous destination as the arrival location!
         to_loc = record.to_location or "UNKNOWN"
         current_time = datetime.now(SGT).strftime("%H%M")
         formatted_names = format_numbered_list(names_list)
@@ -418,7 +488,6 @@ async def get_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     else:
         from_loc = context.user_data.get("adhoc_from", "")
         movement_text = f"Movement from {from_loc} to {to_loc} @ {current_time}H"
-        # Save to database for next arrival lookup
         save_adhoc_departure(user_id, raw_names, from_loc, to_loc)
 
     report = (
@@ -428,7 +497,6 @@ async def get_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     )
 
     await update.message.reply_text(f"```\n{report}\n```", parse_mode="Markdown")
-
     context.user_data.clear()
     await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
     return ConversationHandler.END
@@ -535,7 +603,6 @@ async def get_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     is_arrival = context.user_data.get("is_arrival", False)
 
     if is_arrival:
-        # Generate Arrival report immediately using pre-fetched database data
         now = datetime.now(SGT)
         caa_time = now.strftime("%H%MH %d%m%y")
 
@@ -693,7 +760,6 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
         others_count = context.user_data.get("others_count", "00")
         others_list = context.user_data.get("others_list", "")
 
-        # Save to database for next arrival lookup
         save_flight_departure(context.user_data)
 
         report_lines = [
@@ -780,6 +846,7 @@ conv_handler = ConversationHandler(
     entry_points=[
         CommandHandler("start", start),
         MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+        MessageHandler(filters.Regex("^🏕️ BIBO Report$"), start_bibo),
         MessageHandler(filters.Regex("^📋 Flight Notes$"), start_flight_notes),
     ],
     states={
@@ -789,6 +856,20 @@ conv_handler = ConversationHandler(
             MessageHandler(filters.Regex("^✈️ Flight Movement$"), start_flight_departure),
             MessageHandler(filters.Regex("^✈️ Flight \(Arrival\)$"), start_flight_arrival),
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+        ],
+        BIBO_TYPE: [
+            MessageHandler(filters.Regex("^📥 Book In \(BI\)$"), start_bibo_in),
+            MessageHandler(filters.Regex("^📤 Book Out \(BO\)$"), start_bibo_out),
+            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+        ],
+        BIBO_NAMES: [
+            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_bibo_names),
+        ],
+        BIBO_LOCATION: [
+            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+            MessageHandler(filters.Regex("^↩️ Back$"), start_bibo),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_bibo_location),
         ],
         FLIGHT_NOTES_STATE: [
             MessageHandler(filters.Regex("^🛏️ Bravo Bunk Standardisation$"), send_bunk_standardisation),
@@ -863,6 +944,7 @@ conv_handler = ConversationHandler(
     fallbacks=[
         MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
         MessageHandler(filters.Regex("^📝 Movement Report$"), start_report),
+        MessageHandler(filters.Regex("^🏕️ BIBO Report$"), start_bibo),
         MessageHandler(filters.Regex("^📋 Flight Notes$"), start_flight_notes),
     ],
 )
