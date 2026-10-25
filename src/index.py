@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 from datetime import datetime
 import zoneinfo
@@ -243,7 +244,16 @@ All ledges
 all accessible surfaces"""
 
 def parse_raw_names(text: str) -> list[str]:
-    return [line.strip().upper() for line in text.strip().split("\n") if line.strip()]
+    """Splits text lines, cleans them, and strips any leading numbers/bullets."""
+    lines = text.strip().split("\n")
+    cleaned_names = []
+    for line in lines:
+        line = line.strip()
+        if line:
+            # Remove leading numbering like "1.", "1)", "-", etc. if user typed them
+            line_cleaned = re.sub(r"^(\d+[\.\)]\s*|-\s*|\*\s*)", "", line)
+            cleaned_names.append(line_cleaned.upper())
+    return cleaned_names
 
 def format_numbered_list(names: list[str]) -> str:
     return "\n".join(f"{i+1}. {name}" for i, name in enumerate(names))
@@ -299,7 +309,8 @@ async def send_bunk_standardisation(update: Update, context: ContextTypes.DEFAUL
 async def start_adhoc_departure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["is_arrival"] = False
     await update.message.reply_text(
-        "1/3: Send the **NAMES** (one per line):",
+        "1/3: Send the **NAMES** (one per line).\n"
+        "_Note: Names will be automatically capitalized and numbered for you._",
         parse_mode="Markdown",
         reply_markup=STEP1_MENU,
     )
@@ -336,7 +347,7 @@ async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=STEP1_MENU,
         )
         return ADHOC_NAMES
-        
+
 async def get_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw_names = parse_raw_names(update.message.text)
     context.user_data["adhoc_raw_names"] = raw_names
