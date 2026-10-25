@@ -147,8 +147,7 @@ def get_flight_last_record(flight_name: str) -> FlightRecord:
     # BIBO States
     BIBO_TYPE,
     BIBO_NAMES,
-    BIBO_LOCATION,
-) = range(18)
+) = range(17)
 
 MAIN_MENU = ReplyKeyboardMarkup(
     [
@@ -317,7 +316,7 @@ async def start_bibo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def start_bibo_in(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["bibo_action"] = "booked in of"
     await update.message.reply_text(
-        "1/2: Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
+        "Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
         parse_mode="Markdown",
         reply_markup=STEP1_MENU,
     )
@@ -326,26 +325,16 @@ async def start_bibo_in(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def start_bibo_out(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["bibo_action"] = "booked out of"
     await update.message.reply_text(
-        "1/2: Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
+        "Send the **NAMES** (one per line):\n_Note: Names will be automatically capitalized and numbered._",
         parse_mode="Markdown",
         reply_markup=STEP1_MENU,
     )
     return BIBO_NAMES
 
 async def get_bibo_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    raw_names = parse_raw_names(update.message.text)
-    context.user_data["bibo_names"] = raw_names
-    await update.message.reply_text(
-        "2/2: Send **LOCATION**:",
-        parse_mode="Markdown",
-        reply_markup=LOC_NAV_MENU,
-    )
-    return BIBO_LOCATION
-
-async def get_bibo_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    location = update.message.text.strip().upper()
-    names = context.user_data.get("bibo_names", [])
+    names = parse_raw_names(update.message.text)
     action = context.user_data.get("bibo_action", "booked in of")
+    location = "SAFTI MI"
     
     now = datetime.now(SGT)
     date_str = now.strftime("%d%m%y")
@@ -865,11 +854,6 @@ conv_handler = ConversationHandler(
         BIBO_NAMES: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_bibo_names),
-        ],
-        BIBO_LOCATION: [
-            MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^↩️ Back$"), start_bibo),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, get_bibo_location),
         ],
         FLIGHT_NOTES_STATE: [
             MessageHandler(filters.Regex("^🛏️ Bravo Bunk Standardisation$"), send_bunk_standardisation),
