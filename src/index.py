@@ -187,7 +187,7 @@ NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=
 
 LOC_NAV_MENU = ReplyKeyboardMarkup(
     [
-        ["SAFTI MI", "AIR WINGLINE", "DHA"],
+        ["AIR WINGLINE", "DHA", "CA2"],
         ["SAFTI MC", "SAFTI PS", "SAFTI GUARDROOM"],
         ["RUBBISH CHUTE"],
         ["↩️ Back", "❌ Cancel"]
