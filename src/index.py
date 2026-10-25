@@ -313,15 +313,22 @@ async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE
     if record and record.raw_names:
         names_list = parse_raw_names(record.raw_names)
         context.user_data["adhoc_raw_names"] = names_list
-        loc = record.to_location or "Destination"
         
-        await update.message.reply_text(
-            f"Fetched previous departure names ({len(names_list)} pax).\n"
-            f"Send **ARRIVAL LOCATION** (Default from departure: {loc}):",
-            parse_mode="Markdown",
-            reply_markup=LOC_NAV_MENU,
+        # Automatically use the previous destination as the arrival location!
+        to_loc = record.to_location or "UNKNOWN"
+        current_time = datetime.now(SGT).strftime("%H%M")
+        formatted_names = format_numbered_list(names_list)
+
+        report = (
+            "AD HOC MOVEMENT REPORT\n\n"
+            f"{formatted_names}\n\n"
+            f"Arrival at {to_loc} @ {current_time}H"
         )
-        return ADHOC_TO
+
+        await update.message.reply_text(f"```\n{report}\n```", parse_mode="Markdown")
+        context.user_data.clear()
+        await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
+        return ConversationHandler.END
     else:
         await update.message.reply_text(
             "No previous departure found.\n1/2: Send the **NAMES** (one per line):",
@@ -329,7 +336,7 @@ async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=STEP1_MENU,
         )
         return ADHOC_NAMES
-
+        
 async def get_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw_names = parse_raw_names(update.message.text)
     context.user_data["adhoc_raw_names"] = raw_names
