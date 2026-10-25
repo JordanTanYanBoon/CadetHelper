@@ -260,7 +260,6 @@ All ledges
 all accessible surfaces"""
 
 def parse_raw_names(text: str) -> list[str]:
-    """Splits text lines, cleans them, and strips any leading numbers/bullets."""
     lines = text.strip().split("\n")
     cleaned_names = []
     for line in lines:
@@ -503,9 +502,8 @@ async def start_flight_arrival(update: Update, context: ContextTypes.DEFAULT_TYP
     return await start_flight(update, context)
 
 async def start_flight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    total_steps = 2 if context.user_data.get("is_arrival") else 5
     await update.message.reply_text(
-        f"1/{total_steps}: Select Flight (ALPHA, BRAVO, or CHARLIE):", reply_markup=FLIGHT_CHOICE_MENU
+        "Select Flight (ALPHA, BRAVO, or CHARLIE):", reply_markup=FLIGHT_CHOICE_MENU
     )
     return FLIGHT_SELECT
 
@@ -517,37 +515,68 @@ async def get_flight_select(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if is_arrival:
         record = get_flight_last_record(flight_name)
         if record:
-            context.user_data["flight_total"] = record.total_strength
-            context.user_data["flight_current"] = record.current_strength
-            context.user_data["status_count"] = record.status_count
-            context.user_data["status_list"] = record.status_list
-            context.user_data["status_raw"] = record.status_raw
-            context.user_data["ooc_count"] = record.ooc_count
-            context.user_data["ooc_list"] = record.ooc_list
-            context.user_data["ooc_raw"] = record.ooc_raw
-            context.user_data["nww_count"] = record.nww_count
-            context.user_data["nww_list"] = record.nww_list
-            context.user_data["nww_raw"] = record.nww_raw
-            context.user_data["others_count"] = record.others_count
-            context.user_data["others_list"] = record.others_list
-            context.user_data["others_raw"] = record.others_raw
+            # Automatically populate all previous flight data from database
+            now = datetime.now(SGT)
+            caa_time = now.strftime("%H%MH %d%m%y")
+            to_loc = record.to_location or "DESTINATION"
+            total_str = record.total_strength or "0"
+            curr_str = record.current_strength or "0"
 
-            dest = record.to_location or "Destination"
-            await update.message.reply_text(
-                f"Fetched latest movement data for {flight_name} Flight.\n"
-                f"2/2: Send **ARRIVAL LOCATION** (Default from departure: {dest}):",
-                parse_mode="Markdown",
-                reply_markup=LOC_NAV_MENU,
-            )
-            return FLIGHT_TO
+            status_count = record.status_count or "00"
+            status_list = record.status_list or ""
+            ooc_count = record.ooc_count or "00"
+            ooc_list = record.ooc_list or ""
+            nww_count = record.nww_count or "00"
+            nww_list = record.nww_list or ""
+            others_count = record.others_count or "00"
+            others_list = record.others_list or ""
+
+            report_lines = [
+                "MOVEMENT REPORT",
+                "",
+                f"{flight_name} FLIGHT",
+                "",
+                f"CAA: {caa_time}",
+                "",
+                f"Arrival at {to_loc}",
+                "",
+                f"TOTAL STRENGTH: {total_str}",
+                f"CURRENT STRENGTH: {curr_str}",
+                "",
+                f"On Status: {status_count}",
+            ]
+            if status_list:
+                report_lines.append(status_list)
+
+            report_lines.extend(["", f"Out of Camp: {ooc_count}"])
+            if ooc_list:
+                report_lines.append(ooc_list)
+
+            report_lines.extend(["", f"Currently Not With Wing: {nww_count}"])
+            if nww_list:
+                report_lines.append(nww_list)
+
+            report_lines.extend(["", f"Others: {others_count}"])
+            if others_list:
+                report_lines.append(others_list)
+
+            report_lines.extend(["", "Thank you Sirs, Ma'am and all"])
+
+            full_report = "\n".join(report_lines)
+
+            await update.message.reply_text(f"```\n{full_report}\n```", parse_mode="Markdown")
+            context.user_data.clear()
+            await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
+            return ConversationHandler.END
         else:
             await update.message.reply_text(
-                f"No previous record for {flight_name} Flight. Proceeding with standard flow.\n"
-                "2/4: Send **ARRIVAL LOCATION**:",
+                f"No previous record found for {flight_name} Flight.\n"
+                "2/5: Send **STARTING LOCATION**:",
                 parse_mode="Markdown",
                 reply_markup=LOC_NAV_MENU,
             )
-            return FLIGHT_TO
+            context.user_data["is_arrival"] = False
+            return FLIGHT_FROM
     else:
         await update.message.reply_text(
             "2/5: Send **STARTING LOCATION**:",
@@ -582,85 +611,21 @@ async def back_to_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE
     return FLIGHT_FROM
 
 async def back_from_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if context.user_data.get("is_arrival", False):
-        return await back_to_flight_select(update, context)
-    else:
-        return await back_to_flight_from(update, context)
+    return await back_to_flight_from(update, context)
 
 async def get_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_to"] = update.message.text.strip().upper()
-    is_arrival = context.user_data.get("is_arrival", False)
-
-    if is_arrival:
-        now = datetime.now(SGT)
-        caa_time = now.strftime("%H%MH %d%m%y")
-
-        flight_name = context.user_data.get("flight_name", "")
-        to_loc = context.user_data.get("flight_to", "")
-        total_str = context.user_data.get("flight_total", "0")
-        curr_str = context.user_data.get("flight_current", "0")
-
-        status_count = context.user_data.get("status_count", "00")
-        status_list = context.user_data.get("status_list", "")
-        ooc_count = context.user_data.get("ooc_count", "00")
-        ooc_list = context.user_data.get("ooc_list", "")
-        nww_count = context.user_data.get("nww_count", "00")
-        nww_list = context.user_data.get("nww_list", "")
-        others_count = context.user_data.get("others_count", "00")
-        others_list = context.user_data.get("others_list", "")
-
-        report_lines = [
-            "MOVEMENT REPORT",
-            "",
-            f"{flight_name} FLIGHT",
-            "",
-            f"CAA: {caa_time}",
-            "",
-            f"Arrival at {to_loc}",
-            "",
-            f"TOTAL STRENGTH: {total_str}",
-            f"CURRENT STRENGTH: {curr_str}",
-            "",
-            f"On Status: {status_count}",
-        ]
-        if status_list:
-            report_lines.append(status_list)
-
-        report_lines.extend(["", f"Out of Camp: {ooc_count}"])
-        if ooc_list:
-            report_lines.append(ooc_list)
-
-        report_lines.extend(["", f"Currently Not With Wing: {nww_count}"])
-        if nww_list:
-            report_lines.append(nww_list)
-
-        report_lines.extend(["", f"Others: {others_count}"])
-        if others_list:
-            report_lines.append(others_list)
-
-        report_lines.extend(["", "Thank you Sirs, Ma'am and all"])
-
-        full_report = "\n".join(report_lines)
-
-        await update.message.reply_text(f"```\n{full_report}\n```", parse_mode="Markdown")
-        context.user_data.clear()
-        await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
-        return ConversationHandler.END
-    else:
-        await update.message.reply_text(
-            "4/5: Send **TOTAL STRENGTH** (e.g., 37):",
-            parse_mode="Markdown",
-            reply_markup=NAV_MENU,
-        )
-        return FLIGHT_TOTAL
+    await update.message.reply_text(
+        "4/5: Send **TOTAL STRENGTH** (e.g., 37):",
+        parse_mode="Markdown",
+        reply_markup=NAV_MENU,
+    )
+    return FLIGHT_TOTAL
 
 async def back_to_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_to", "None")
-    is_arrival = context.user_data.get("is_arrival", False)
-    step = "2" if is_arrival else "3"
-
     await update.message.reply_text(
-        f"Going back to Step {step}.\n\n*Current ARRIVAL LOCATION:* {current}\n\nSend **ARRIVAL LOCATION**:",
+        f"Going back to Step 3.\n\n*Current ARRIVAL LOCATION:* {current}\n\nSend **ARRIVAL LOCATION**:",
         parse_mode="Markdown",
         reply_markup=LOC_NAV_MENU,
     )
@@ -886,7 +851,7 @@ conv_handler = ConversationHandler(
         ],
         FLIGHT_TO: [
             MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
-            MessageHandler(filters.Regex("^↩️ Back$"), back_from_flight_to),
+            MessageHandler(filters.Regex("^↩️ Back$"), back_to_flight_from),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_flight_to),
         ],
         FLIGHT_TOTAL: [
