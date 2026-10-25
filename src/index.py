@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime
 import zoneinfo
 from flask import Flask, request
+from flask_sqlalchemy import SQLAlchemy
 from telegram import (
     ReplyKeyboardMarkup,
     Update,
@@ -22,7 +23,108 @@ app = Flask(__name__)
 # Timezone Configuration (Singapore Time)
 SGT = zoneinfo.ZoneInfo("Asia/Singapore")
 
-# Conversation States
+# -------------------------------------------------------------------
+# Neon PostgreSQL Database Configuration
+# -------------------------------------------------------------------
+db_url = os.getenv("DATABASE_URL", "")
+if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+
+db = SQLAlchemy(app)
+
+class AdHocRecord(db.Model):
+    __tablename__ = "adhoc_records"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.BigInteger, nullable=False, index=True)
+    raw_names = db.Column(db.Text, nullable=True)
+    from_location = db.Column(db.String(100), nullable=True)
+    to_location = db.Column(db.String(100), nullable=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(SGT), onupdate=lambda: datetime.now(SGT))
+
+class FlightRecord(db.Model):
+    __tablename__ = "flight_records"
+
+    id = db.Column(db.Integer, primary_key=True)
+    flight_name = db.Column(db.String(50), primary_key=True) # ALPHA, BRAVO, or CHARLIE
+    from_location = db.Column(db.String(100), nullable=True)
+    to_location = db.Column(db.String(100), nullable=True)
+    total_strength = db.Column(db.String(10), nullable=True)
+    current_strength = db.Column(db.String(10), nullable=True)
+    status_count = db.Column(db.String(10), nullable=True)
+    status_list = db.Column(db.Text, nullable=True)
+    status_raw = db.Column(db.Text, nullable=True)
+    ooc_count = db.Column(db.String(10), nullable=True)
+    ooc_list = db.Column(db.Text, nullable=True)
+    ooc_raw = db.Column(db.Text, nullable=True)
+    nww_count = db.Column(db.String(10), nullable=True)
+    nww_list = db.Column(db.Text, nullable=True)
+    nww_raw = db.Column(db.Text, nullable=True)
+    others_count = db.Column(db.String(10), nullable=True)
+    others_list = db.Column(db.Text, nullable=True)
+    others_raw = db.Column(db.Text, nullable=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(SGT), onupdate=lambda: datetime.now(SGT))
+
+with app.app_context():
+    db.create_all()
+
+# -------------------------------------------------------------------
+# Database Helpers
+# -------------------------------------------------------------------
+
+def save_adhoc_departure(user_id: int, raw_names: list[str], from_loc: str, to_loc: str):
+    record = AdHocRecord.query.filter_by(user_id=user_id).first()
+    if not record:
+        record = AdHocRecord(user_id=user_id)
+        db.session.add(record)
+    record.raw_names = "\n".join(raw_names)
+    record.from_location = from_loc
+    record.to_location = to_loc
+    db.session.commit()
+
+def get_adhoc_last_record(user_id: int) -> AdHocRecord:
+    return AdHocRecord.query.filter_by(user_id=user_id).first()
+
+def save_flight_departure(data: dict):
+    flight_name = data.get("flight_name")
+    record = FlightRecord.query.filter_by(flight_name=flight_name).first()
+    if not record:
+        record = FlightRecord(flight_name=flight_name)
+        db.session.add(record)
+    
+    record.from_location = data.get("flight_from", "")
+    record.to_location = data.get("flight_to", "")
+    record.total_strength = data.get("flight_total", "0")
+    record.current_strength = data.get("flight_current", "0")
+    record.status_count = data.get("status_count", "00")
+    record.status_list = data.get("status_list", "")
+    record.status_raw = data.get("status_raw", "")
+    record.ooc_count = data.get("ooc_count", "00")
+    record.ooc_list = data.get("ooc_list", "")
+    record.ooc_raw = data.get("ooc_raw", "")
+    record.nww_count = data.get("nww_count", "00")
+    record.nww_list = data.get("nww_list", "")
+    record.nww_raw = data.get("nww_raw", "")
+    record.others_count = data.get("others_count", "00")
+    record.others_list = data.get("others_list", "")
+    record.others_raw = data.get("others_raw", "")
+    db.session.commit()
+
+def get_flight_last_record(flight_name: str) -> FlightRecord:
+    return FlightRecord.query.filter_by(flight_name=flight_name).first()
+
+
+# -------------------------------------------------------------------
+# Conversation States & Keyboards
+# -------------------------------------------------------------------
+
 (
     REPORT_TYPE,
     # Ad Hoc States
@@ -44,13 +146,7 @@ SGT = zoneinfo.ZoneInfo("Asia/Singapore")
     FLIGHT_NOTES_STATE,
 ) = range(15)
 
-# Reply Keyboards
-MAIN_MENU = ReplyKeyboardMarkup(
-    [
-        ["📝 Movement Report", "📋 Flight Notes"]
-    ], 
-    resize_keyboard=True
-)
+MAIN_MENU = ReplyKeyboardMarkup([["📝 Movement Report", "📋 Flight Notes"]], resize_keyboard=True)
 
 TYPE_MENU = ReplyKeyboardMarkup(
     [
@@ -62,11 +158,7 @@ TYPE_MENU = ReplyKeyboardMarkup(
 )
 
 FLIGHT_NOTES_MENU = ReplyKeyboardMarkup(
-    [
-        ["🛏️ Bravo Bunk Standardisation"],
-        ["❌ Cancel"]
-    ],
-    resize_keyboard=True
+    [["🛏️ Bravo Bunk Standardisation"], ["❌ Cancel"]], resize_keyboard=True
 )
 
 FLIGHT_CHOICE_MENU = ReplyKeyboardMarkup(
@@ -76,7 +168,6 @@ FLIGHT_CHOICE_MENU = ReplyKeyboardMarkup(
 STEP1_MENU = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
 NAV_MENU = ReplyKeyboardMarkup([["↩️ Back", "❌ Cancel"]], resize_keyboard=True)
 
-# New Keyboard for Quick Locations
 LOC_NAV_MENU = ReplyKeyboardMarkup(
     [
         ["AIR WINGLINE", "DHA", "CA2"],
@@ -152,15 +243,12 @@ All ledges
 all accessible surfaces"""
 
 def parse_raw_names(text: str) -> list[str]:
-    """Splits text lines and cleans them into uppercase strings."""
     return [line.strip().upper() for line in text.strip().split("\n") if line.strip()]
 
 def format_numbered_list(names: list[str]) -> str:
-    """Formats list of names into 1. NAME 2. NAME..."""
     return "\n".join(f"{i+1}. {name}" for i, name in enumerate(names))
 
 def format_status_list(text: str) -> tuple[str, str]:
-    """Formats status personnel or defaults to 00 if nil/none."""
     cleaned = text.strip()
     if cleaned.upper() in ["NIL", "NONE", "0", "NO", "-"]:
         return "00", ""
@@ -171,7 +259,6 @@ def format_status_list(text: str) -> tuple[str, str]:
     return count_str, formatted_items
 
 def get_category_keyboard(user_data: dict) -> ReplyKeyboardMarkup:
-    """Generates reply buttons showing checkmarks for completed categories."""
     status_icon = "✅ " if "status_count" in user_data else ""
     ooc_icon = "✅ " if "ooc_count" in user_data else ""
     nww_icon = "✅ " if "nww_count" in user_data else ""
@@ -190,14 +277,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Prompt user to select report type."""
     await update.message.reply_text(
         "Select the type of Movement Report:", reply_markup=TYPE_MENU
     )
     return REPORT_TYPE
 
 async def start_flight_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Prompt user to select Flight Notes options."""
     await update.message.reply_text(
         "Select Flight Notes option:", reply_markup=FLIGHT_NOTES_MENU
     )
@@ -213,20 +298,37 @@ async def send_bunk_standardisation(update: Update, context: ContextTypes.DEFAUL
 
 async def start_adhoc_departure(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["is_arrival"] = False
-    return await start_adhoc(update, context)
-
-async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["is_arrival"] = True
-    return await start_adhoc(update, context)
-
-async def start_adhoc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    total_steps = 2 if context.user_data.get("is_arrival") else 3
     await update.message.reply_text(
-        f"1/{total_steps}: Send the **NAMES** (one per line):",
+        "1/3: Send the **NAMES** (one per line):",
         parse_mode="Markdown",
         reply_markup=STEP1_MENU,
     )
     return ADHOC_NAMES
+
+async def start_adhoc_arrival(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["is_arrival"] = True
+    user_id = update.effective_user.id
+    record = get_adhoc_last_record(user_id)
+
+    if record and record.raw_names:
+        names_list = parse_raw_names(record.raw_names)
+        context.user_data["adhoc_raw_names"] = names_list
+        loc = record.to_location or "Destination"
+        
+        await update.message.reply_text(
+            f"Fetched previous departure names ({len(names_list)} pax).\n"
+            f"Send **ARRIVAL LOCATION** (Default from departure: {loc}):",
+            parse_mode="Markdown",
+            reply_markup=LOC_NAV_MENU,
+        )
+        return ADHOC_TO
+    else:
+        await update.message.reply_text(
+            "No previous departure found.\n1/2: Send the **NAMES** (one per line):",
+            parse_mode="Markdown",
+            reply_markup=STEP1_MENU,
+        )
+        return ADHOC_NAMES
 
 async def get_adhoc_names(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw_names = parse_raw_names(update.message.text)
@@ -280,7 +382,6 @@ async def back_to_adhoc_from(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ADHOC_FROM
 
 async def back_from_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Routes the back button dynamically depending on if it's an Arrival or Departure."""
     if context.user_data.get("is_arrival", False):
         return await back_to_adhoc_names(update, context)
     else:
@@ -292,12 +393,15 @@ async def get_adhoc_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     
     current_time = datetime.now(SGT).strftime("%H%M")
     formatted_names = format_numbered_list(raw_names)
+    user_id = update.effective_user.id
 
     if context.user_data.get("is_arrival", False):
         movement_text = f"Arrival at {to_loc} @ {current_time}H"
     else:
         from_loc = context.user_data.get("adhoc_from", "")
         movement_text = f"Movement from {from_loc} to {to_loc} @ {current_time}H"
+        # Save to database for next arrival lookup
+        save_adhoc_departure(user_id, raw_names, from_loc, to_loc)
 
     report = (
         "AD HOC MOVEMENT REPORT\n\n"
@@ -324,26 +428,54 @@ async def start_flight_arrival(update: Update, context: ContextTypes.DEFAULT_TYP
     return await start_flight(update, context)
 
 async def start_flight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    total_steps = 4 if context.user_data.get("is_arrival") else 5
+    total_steps = 2 if context.user_data.get("is_arrival") else 5
     await update.message.reply_text(
         f"1/{total_steps}: Select Flight (ALPHA, BRAVO, or CHARLIE):", reply_markup=FLIGHT_CHOICE_MENU
     )
     return FLIGHT_SELECT
 
 async def get_flight_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["flight_name"] = update.message.text.strip().upper()
+    flight_name = update.message.text.strip().upper()
+    context.user_data["flight_name"] = flight_name
     is_arrival = context.user_data.get("is_arrival", False)
 
     if is_arrival:
-        await update.message.reply_text(
-            "2/4: Send **ARRIVAL LOCATION**:",
-            parse_mode="Markdown",
-            reply_markup=LOC_NAV_MENU,
-        )
-        return FLIGHT_TO
+        record = get_flight_last_record(flight_name)
+        if record:
+            context.user_data["flight_total"] = record.total_strength
+            context.user_data["flight_current"] = record.current_strength
+            context.user_data["status_count"] = record.status_count
+            context.user_data["status_list"] = record.status_list
+            context.user_data["status_raw"] = record.status_raw
+            context.user_data["ooc_count"] = record.ooc_count
+            context.user_data["ooc_list"] = record.ooc_list
+            context.user_data["ooc_raw"] = record.ooc_raw
+            context.user_data["nww_count"] = record.nww_count
+            context.user_data["nww_list"] = record.nww_list
+            context.user_data["nww_raw"] = record.nww_raw
+            context.user_data["others_count"] = record.others_count
+            context.user_data["others_list"] = record.others_list
+            context.user_data["others_raw"] = record.others_raw
+
+            dest = record.to_location or "Destination"
+            await update.message.reply_text(
+                f"Fetched latest movement data for {flight_name} Flight.\n"
+                f"2/2: Send **ARRIVAL LOCATION** (Default from departure: {dest}):",
+                parse_mode="Markdown",
+                reply_markup=LOC_NAV_MENU,
+            )
+            return FLIGHT_TO
+        else:
+            await update.message.reply_text(
+                f"No previous record for {flight_name} Flight. Proceeding with standard flow.\n"
+                "2/4: Send **ARRIVAL LOCATION**:",
+                parse_mode="Markdown",
+                reply_markup=LOC_NAV_MENU,
+            )
+            return FLIGHT_TO
     else:
         await update.message.reply_text(
-            "2/5: Send **STARTING LOCATION:",
+            "2/5: Send **STARTING LOCATION**:",
             parse_mode="Markdown",
             reply_markup=LOC_NAV_MENU,
         )
@@ -375,7 +507,6 @@ async def back_to_flight_from(update: Update, context: ContextTypes.DEFAULT_TYPE
     return FLIGHT_FROM
 
 async def back_from_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Routes the back button dynamically depending on if it's an Arrival or Departure."""
     if context.user_data.get("is_arrival", False):
         return await back_to_flight_select(update, context)
     else:
@@ -384,23 +515,78 @@ async def back_from_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def get_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_to"] = update.message.text.strip().upper()
     is_arrival = context.user_data.get("is_arrival", False)
-    step = "3/4" if is_arrival else "4/5"
 
-    await update.message.reply_text(
-        f"{step}: Send **TOTAL STRENGTH** (e.g., 37):",
-        parse_mode="Markdown",
-        reply_markup=NAV_MENU,
-    )
-    return FLIGHT_TOTAL
+    if is_arrival:
+        # Generate Arrival report immediately using pre-fetched database data
+        now = datetime.now(SGT)
+        caa_time = now.strftime("%H%MH %d%m%y")
+
+        flight_name = context.user_data.get("flight_name", "")
+        to_loc = context.user_data.get("flight_to", "")
+        total_str = context.user_data.get("flight_total", "0")
+        curr_str = context.user_data.get("flight_current", "0")
+
+        status_count = context.user_data.get("status_count", "00")
+        status_list = context.user_data.get("status_list", "")
+        ooc_count = context.user_data.get("ooc_count", "00")
+        ooc_list = context.user_data.get("ooc_list", "")
+        nww_count = context.user_data.get("nww_count", "00")
+        nww_list = context.user_data.get("nww_list", "")
+        others_count = context.user_data.get("others_count", "00")
+        others_list = context.user_data.get("others_list", "")
+
+        report_lines = [
+            "MOVEMENT REPORT",
+            "",
+            f"{flight_name} FLIGHT",
+            "",
+            f"CAA: {caa_time}",
+            "",
+            f"Arrival at {to_loc}",
+            "",
+            f"TOTAL STRENGTH: {total_str}",
+            f"CURRENT STRENGTH: {curr_str}",
+            "",
+            f"On Status: {status_count}",
+        ]
+        if status_list:
+            report_lines.append(status_list)
+
+        report_lines.extend(["", f"Out of Camp: {ooc_count}"])
+        if ooc_list:
+            report_lines.append(ooc_list)
+
+        report_lines.extend(["", f"Currently Not With Wing: {nww_count}"])
+        if nww_list:
+            report_lines.append(nww_list)
+
+        report_lines.extend(["", f"Others: {others_count}"])
+        if others_list:
+            report_lines.append(others_list)
+
+        report_lines.extend(["", "Thank you Sirs, Ma'am and all"])
+
+        full_report = "\n".join(report_lines)
+
+        await update.message.reply_text(f"```\n{full_report}\n```", parse_mode="Markdown")
+        context.user_data.clear()
+        await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
+        return ConversationHandler.END
+    else:
+        await update.message.reply_text(
+            "4/5: Send **TOTAL STRENGTH** (e.g., 37):",
+            parse_mode="Markdown",
+            reply_markup=NAV_MENU,
+        )
+        return FLIGHT_TOTAL
 
 async def back_to_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_to", "None")
     is_arrival = context.user_data.get("is_arrival", False)
     step = "2" if is_arrival else "3"
-    loc_label = "ARRIVAL LOCATION"
 
     await update.message.reply_text(
-        f"Going back to Step {step}.\n\n*Current {loc_label}:* {current}\n\nSend **{loc_label}**:",
+        f"Going back to Step {step}.\n\n*Current ARRIVAL LOCATION:* {current}\n\nSend **ARRIVAL LOCATION**:",
         parse_mode="Markdown",
         reply_markup=LOC_NAV_MENU,
     )
@@ -408,11 +594,8 @@ async def back_to_flight_to(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def get_flight_total(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["flight_total"] = update.message.text.strip()
-    is_arrival = context.user_data.get("is_arrival", False)
-    step = "4/4" if is_arrival else "5/5"
-
     await update.message.reply_text(
-        f"{step}: Send **CURRENT STRENGTH** (e.g., 37):",
+        "5/5: Send **CURRENT STRENGTH** (e.g., 37):",
         parse_mode="Markdown",
         reply_markup=NAV_MENU,
     )
@@ -420,11 +603,8 @@ async def get_flight_total(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def back_to_flight_total(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current = context.user_data.get("flight_total", "None")
-    is_arrival = context.user_data.get("is_arrival", False)
-    step = "3" if is_arrival else "4"
-
     await update.message.reply_text(
-        f"Going back to Step {step}.\n\n*Current Total Strength:* {current}\n\nSend **TOTAL STRENGTH**:",
+        f"Going back to Step 4.\n\n*Current Total Strength:* {current}\n\nSend **TOTAL STRENGTH**:",
         parse_mode="Markdown",
         reply_markup=NAV_MENU,
     )
@@ -435,7 +615,6 @@ async def get_flight_current(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await show_category_menu(update, context)
 
 async def show_category_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Shows the button options for status breakdown via Reply Keyboard."""
     reply_markup = get_category_keyboard(context.user_data)
     text = "Select categories to add personnel, or tap **✅ DONE** if completed:"
     
@@ -443,7 +622,6 @@ async def show_category_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return FLIGHT_CATEGORY_MENU
 
 async def handle_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles text button clicks from the category menu."""
     choice = update.message.text
 
     if "On Status" in choice:
@@ -483,15 +661,8 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
         caa_time = now.strftime("%H%MH %d%m%y")
 
         flight_name = context.user_data.get("flight_name", "")
+        from_loc = context.user_data.get("flight_from", "")
         to_loc = context.user_data.get("flight_to", "")
-        is_arrival = context.user_data.get("is_arrival", False)
-
-        if is_arrival:
-            movement_text = f"Arrival at {to_loc}"
-        else:
-            from_loc = context.user_data.get("flight_from", "")
-            movement_text = f"Movement from {from_loc} to {to_loc}"
-
         total_str = context.user_data.get("flight_total", "0")
         curr_str = context.user_data.get("flight_current", "0")
 
@@ -504,6 +675,9 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
         others_count = context.user_data.get("others_count", "00")
         others_list = context.user_data.get("others_list", "")
 
+        # Save to database for next arrival lookup
+        save_flight_departure(context.user_data)
+
         report_lines = [
             "MOVEMENT REPORT",
             "",
@@ -511,7 +685,7 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
             "",
             f"CAA: {caa_time}",
             "",
-            movement_text,
+            f"Movement from {from_loc} to {to_loc}",
             "",
             f"TOTAL STRENGTH: {total_str}",
             f"CURRENT STRENGTH: {curr_str}",
@@ -538,7 +712,6 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
         full_report = "\n".join(report_lines)
 
         await update.message.reply_text(f"```\n{full_report}\n```", parse_mode="Markdown")
-
         context.user_data.clear()
         await update.message.reply_text("Tap below for another:", reply_markup=MAIN_MENU)
         return ConversationHandler.END
